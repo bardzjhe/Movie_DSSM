@@ -1,0 +1,154 @@
+# Importing the required libraries
+import sys
+import os
+
+# Add the grandparent directory of this script to the Python path
+# to allow imports from there
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+# Importing data manipulation and numerical libraries
+import pandas as pd
+import numpy as np
+
+# For object serialization
+import pickle
+
+# PyTorch library for building deep learning models
+import torch
+
+# For progress bars in loops
+import tqdm
+
+# For computing the AUC score of the model
+from sklearn.metrics import roc_auc_score
+
+# Importing constants from a custom module
+from data_exchange_center.constants import *
+
+# Importing paths to data and model from a custom module
+from data_exchange_center.paths import OFFLINE_IMP_PATH, USER_VECTOR_PATH, ITEM_VECTOR_PATH, RECALL_MODEL_PTH_PATH
+
+
+# Function to load data
+def load_data():
+    # Reading impressions data from a CSV file
+    offline_imp = pd.read_csv(OFFLINE_IMP_PATH)
+    return offline_imp
+
+
+# Defining a Matrix Factorization model class
+class MFModel(torch.nn.Module):
+    def __init__(self, user_cnt, item_cnt):
+        super().__init__()
+        # Embeddings for users
+        self.P = torch.nn.Embedding(user_cnt, RECALL_EMB_DIM)
+        # Embeddings for items
+        self.Q = torch.nn.Embedding(item_cnt, RECALL_EMB_DIM)
+        # Initialize the embeddings using Xavier uniform distribution
+        torch.nn.init.xavier_uniform_(self.P.weight.data)
+        torch.nn.init.xavier_uniform_(self.Q.weight.data)
+
+    def forward(self, x):
+        # Convert indices to int32
+        x = x.to(torch.int32)
+        # Split input into user and item indices
+        user, item = x[:, 0], x[:, 1]
+        # Retrieve user and item embeddings
+        u_emb = self.P(user)
+        i_emb = self.Q(item)
+        # Element-wise multiplication of user and item embeddings and sum along the dimension
+        y = torch.sum(torch.multiply(u_emb, i_emb), dim=1)
+        # Apply sigmoid to the result to get predictions
+        return torch.sigmoid(y)
+
+
+if __name__ == '__main__':
+    # Set random seed for reproducibility
+    seed = 123
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    # Ensure deterministic behavior in CuDNN backend
+    torch.backends.cudnn.deterministic = True
+    torch.use_deterministic_algorithms = True
+
+    # Load the impression data
+    offline_imp = load_data()
+    # Split the data into train and test sets based on the ISTEST flag
+    train_data = offline_imp[offline_imp[ISTEST] == 0].reset_index(drop=True)
+    test_data = offline_imp[offline_imp[ISTEST] == 1].reset_index(drop=True)
+
+    # Defining the number of users and items based on the constants
+    user_cnt, item_cnt = MAX_USERID+1, MAX_ITEMID+1
+    # Initializing a matrix to store the ratings
+    rating_matrix = np.zeros((user_cnt, item_cnt))
+    # Set ratings to 1 based on the train data
+    for u, i, l in train_data[[USERID, ITEMID, LABEL]].values:
+        if l == 1:
+            rating_matrix[u][i] = 1
+
+    # Shuffle the train data
+    train_data = train_data.sample(frac=1, random_state=seed).reset_index(drop=True)
+
+    # Set training parameters
+    epoch = 10
+    batch_size = 1024
+    # Initialize the MF model
+    model = MFModel(user_cnt, item_cnt)
+    # Define the loss function
+    loss_func = torch.nn.BCELoss()
+    # Define the optimizer
+    optimizer = torch.optim.Adam(params=model.parameters(), lr=0.001)
+    # Set the model to training mode
+    model.train()
+
+    # Training loop
+    for ep in range(epoch):
+        # Loop over batches
+        for i in tqdm.tqdm(range(len(train_data) // batch_size + 1)):
+            # Get batch indices
+            train_indices = range(i*batch_size, min((i+1)*batch_size, len(train_data)))
+            # Get batch data and targets
+            x, target = torch.Tensor(train_data.loc[train_indices,[USERID, ITEMID]].values), \
+                        torch.Tensor(train_data.loc[train_indices,LABEL].values)
+            # Get predictions from the model
+            preds = model(x)
+            # Calculate the loss
+            loss = loss_func(preds, target.float())
+            # Zero the gradients
+            model.zero_grad()
+            # Backpropagation
+            loss.backward()
+            # Update model parameters
+            optimizer.step()
+
+        # Lists to store targets and predictions
+        targets, predicts = list(), list```python
+        # Evaluate the model on the test set
+        with torch.no_grad():
+            # Loop over batches in the test data
+            for i in tqdm.tqdm(range(len(test_data) // batch_size + 1)):
+                # Get batch indices
+                test_indices = range(i * batch_size, min((i+1) * batch_size, len(test_data)))
+                # Get batch data and targets
+                x, target = torch.Tensor(test_data.loc[test_indices, [USERID, ITEMID]].values), \
+                            torch.Tensor(test_data.loc[test_indices, LABEL].values)
+                # Get predictions from the model
+                preds = model(x)
+                # Extend the targets and predictions lists
+                targets.extend(target.tolist())
+                predicts.extend(preds.tolist())
+        # Calculate AUC score
+        auc = roc_auc_score(targets, predicts)
+        # Print epoch number and AUC score
+        print(f"epoch: {ep}, test auc: {auc}")
+    # Save the trained model
+    torch.save(model, RECALL_MODEL_PTH_PATH)
+
+    # Save the user and item vectors
+    user_vector = model.P.weight.data.numpy()
+    item_vector = model.Q.weight.data.numpy()
+    # Print the shapes of the user and item vectors
+    print(f"user_vector: {user_vector.shape}, item_vector: {item_vector.shape}")
+    # Serialize and save the user and item vectors using pickle
+    pickle.dump(user_vector.tolist(), open(USER_VECTOR_PATH, 'wb'), protocol=4)
+    pickle.dump(item_vector.tolist(), open(ITEM_VECTOR_PATH, 'wb'), protocol=4)
