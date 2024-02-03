@@ -13,7 +13,7 @@ class FeaturesLinear(torch.nn.Module):
         # Bias term for the linear part
         self.bias = torch.nn.Parameter(torch.zeros((output_dim,)))
         # Calculate offsets for each field to map input fields to the correct embedding
-        self.offsets = np.array((0, *np.cumsum(field_dims)[:-1]), dtype=np.long)
+        self.offsets = np.array((0, *np.cumsum(field_dims)[:-1]), dtype=np.longlong)
 
     def forward(self, x):
         """
@@ -35,7 +35,8 @@ class FeaturesEmbedding(torch.nn.Module):
         # Initialize the embedding weights using Xavier uniform initialization
         torch.nn.init.xavier_uniform_(self.embedding.weight.data)
         # Calculate offsets for each field to map input fields to the correct embedding
-        self.offsets = np.array((0, *np.cumsum(field_dims)[:-1]), dtype=np.long)
+        # TODO: longlong 在这里什么意思
+        self.offsets = np.array((0, *np.cumsum(field_dims)[:-1]), dtype=np.longlong)
 
     def forward(self, x):
         """
