@@ -43,3 +43,5 @@ GENRES_MAPPING = {
     "War": 17,
     "Western": 18
 }
+
+RECALL_EMB_DIM = 16

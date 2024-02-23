@@ -2,6 +2,8 @@
 cd preprocess
 pip install py27hash
 
+
+
 echo "---> Split movielens data ..."
 python process.py
 
