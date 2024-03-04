@@ -1,5 +1,3 @@
-
-
 MovieLens_DATA_PATH = "../../data/ml-1m"
 
 MovieLens_RAW_USER_PATH = MovieLens_DATA_PATH + "/users.dat"
